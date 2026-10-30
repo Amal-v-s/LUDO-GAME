@@ -1,0 +1,7 @@
+{
+  "name": "ludo-room",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A simple multiplayer Ludo game for up to six friends",
+  "scripts": { "start": "node server.js" }
+}
