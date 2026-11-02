@@ -16,10 +16,10 @@ function safeAvatar(value) {
 }
 function publicRoom(room) {
   const active=current(room);
-  return { code: room.code, started: room.started, players: room.players.map(({id, name, color, avatar}) => ({id, name, color, avatar:avatar||''})), turn: room.turn, die: room.die, lastRoll:room.lastRoll||null, canUndo:Boolean(room.started&&room.history?.length>1), canRedo:Boolean(room.started&&room.redoHistory?.length), historyEpoch:room.historyEpoch||0, validMoves:active?validTokenMoves(room,active.id):[], message: room.message, tokens: room.tokens, winners: room.winners };
+  return { code: room.code, started: room.started, players: room.players.map(({id, name, color, avatar}) => ({id, name, color, avatar:avatar||''})), turn: room.turn, die: room.die, lastRoll:room.lastRoll||null, killCounts:room.killCounts||{}, canUndo:Boolean(room.started&&room.history?.length>1), canRedo:Boolean(room.started&&room.redoHistory?.length), historyEpoch:room.historyEpoch||0, validMoves:active?validTokenMoves(room,active.id):[], message: room.message, tokens: room.tokens, winners: room.winners };
 }
-function captureGameState(room) { return {turn:room.turn,die:room.die,lastRoll:room.lastRoll?{...room.lastRoll}:null,message:room.message,tokens:Object.fromEntries(Object.entries(room.tokens).map(([id,positions])=>[id,[...positions]])),winners:[...room.winners]}; }
-function restoreGameState(room,state) { room.turn=state.turn;room.die=state.die;room.lastRoll=state.lastRoll?{...state.lastRoll}:null;room.message=state.message;room.tokens=Object.fromEntries(Object.entries(state.tokens).map(([id,positions])=>[id,[...positions]]));room.winners=[...state.winners]; }
+function captureGameState(room) { return {turn:room.turn,die:room.die,lastRoll:room.lastRoll?{...room.lastRoll}:null,message:room.message,tokens:Object.fromEntries(Object.entries(room.tokens).map(([id,positions])=>[id,[...positions]])),winners:[...room.winners],killCounts:{...room.killCounts}}; }
+function restoreGameState(room,state) { room.turn=state.turn;room.die=state.die;room.lastRoll=state.lastRoll?{...state.lastRoll}:null;room.message=state.message;room.tokens=Object.fromEntries(Object.entries(state.tokens).map(([id,positions])=>[id,[...positions]]));room.winners=[...state.winners];room.killCounts={...(state.killCounts||{})}; }
 function recordGameState(room) { room.history.push(captureGameState(room));if(room.history.length>101)room.history.shift();room.redoHistory=[]; }
 function send(res, status, data) { res.writeHead(status, {'content-type':'application/json','access-control-allow-origin':'*','cache-control':'no-store'}); res.end(JSON.stringify(data)); }
 function body(req) { return new Promise((resolve,reject)=>{let s=''; req.on('data',c=>s+=c); req.on('end',()=>{try{resolve(JSON.parse(s||'{}'))}catch(e){reject(e)}});}); }
@@ -32,26 +32,27 @@ function validTokenMoves(room, playerId) {
 function moveToken(room, player, idx) {
   const ts=room.tokens[player.id], old=ts[idx];
   if(old<0 && room.die!==6 || old>=0 && old+room.die>57) return {error:'That token cannot move.'};
-  let captured=false; ts[idx]=old<0?0:old+room.die;
+  let captures=0; ts[idx]=old<0?0:old+room.die;
   const playerIndex=room.players.findIndex(p=>p.id===player.id), start=startOffsets[playerIndex];
   if(ts[idx]<52) {
     const pos=(start+ts[idx])%52;
-    if(![0,8,13,21,26,34,39,47].includes(pos)) for(const op of room.players) if(op.id!==player.id) {const opIndex=room.players.findIndex(p=>p.id===op.id);room.tokens[op.id].forEach((t,i)=>{if(t>=0&&t<52&&(startOffsets[opIndex]+t)%52===pos){room.tokens[op.id][i]=-1;captured=true;}});}
+    if(![0,8,13,21,26,34,39,47].includes(pos)) for(const op of room.players) if(op.id!==player.id) {const opIndex=room.players.findIndex(p=>p.id===op.id);room.tokens[op.id].forEach((t,i)=>{if(t>=0&&t<52&&(startOffsets[opIndex]+t)%52===pos){room.tokens[op.id][i]=-1;captures++;}});}
   }
+  if(captures) room.killCounts[player.id]=(room.killCounts[player.id]||0)+captures;
   const finished=ts[idx]===57; if(finished&&!room.winners.includes(player.id)) room.winners.push(player.id);
-  const bonus=room.die===6||captured||finished;
-  const description=finished?`${player.name} brought a token home!`:captured?`${player.name} captured a token!`:`${player.name} moved a token.`;
+  const captured=captures>0,bonus=room.die===6||captured||finished;
+  const description=finished?`${player.name} brought a token home!`:captured?`${player.name} captured ${captures} token${captures===1?'':'s'}!`:`${player.name} moved a token.`;
   room.die=null;
   if(room.winners.length===room.players.length-1) {room.winners.push(...room.players.filter(p=>!room.winners.includes(p.id)).map(p=>p.id));room.message='Game over!';}
   else if(!bonus) nextTurn(room);
-  return {captured,finished,bonus,description};
+  return {captured,captures,finished,bonus,description};
 }
 function api(req,res,url) {
   if(req.method==='OPTIONS') {res.writeHead(204,{'access-control-allow-origin':'*','access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'content-type'}); return res.end();}
   (async()=>{
     if(url.pathname==='/api/create' && req.method==='POST') {
       const b=await body(req), name=String(b.name||'').trim().slice(0,18)||'Player 1'; let id=crypto.randomUUID(); let c=code(); while(rooms.has(c)) c=code();
-      const room={code:c,host:id,started:false,players:[{id,name,color:colors[0],avatar:safeAvatar(b.avatar)}],turn:0,die:null,message:'Waiting for friends to join…',tokens:{},winners:[],rollRequests:new Map(),history:[],redoHistory:[],historyEpoch:0};
+      const room={code:c,host:id,started:false,players:[{id,name,color:colors[0],avatar:safeAvatar(b.avatar)}],turn:0,die:null,message:'Waiting for friends to join…',tokens:{},winners:[],killCounts:{[id]:0},rollRequests:new Map(),history:[],redoHistory:[],historyEpoch:0};
       rooms.set(c,room); return send(res,200,{playerId:id,room:publicRoom(room)});
     }
     if(url.pathname==='/api/join' && req.method==='POST') {
@@ -60,7 +61,7 @@ function api(req,res,url) {
       if(room.started) return send(res,409,{error:'This game has already started.'});
       if(room.players.length>=6) return send(res,409,{error:'This room is full.'});
       const id=crypto.randomUUID(), name=String(b.name||'').trim().slice(0,18)||`Player ${room.players.length+1}`;
-      room.players.push({id,name,color:colors[room.players.length],avatar:safeAvatar(b.avatar)}); room.message=`${name} joined the room.`;
+      room.players.push({id,name,color:colors[room.players.length],avatar:safeAvatar(b.avatar)}); room.killCounts[id]=0; room.message=`${name} joined the room.`;
       return send(res,200,{playerId:id,room:publicRoom(room)});
     }
     const m=url.pathname.match(/^\/api\/room\/([A-Z0-9]+)$/);
@@ -68,6 +69,7 @@ function api(req,res,url) {
     if(m && req.method==='POST') {
       const room=rooms.get(m[1]); if(!room) return send(res,404,{error:'Room not found.'});
       const b=await body(req), player=room.players.find(p=>p.id===b.playerId); if(!player) return send(res,403,{error:'You are not in this room.'});
+      if(room.started&&!room.killCounts) room.killCounts=Object.fromEntries(room.players.map(p=>[p.id,0]));
       if(room.started&&!Array.isArray(room.history)){room.history=[captureGameState(room)];room.redoHistory=[];room.historyEpoch=0;}
       if(b.action==='roll' && typeof b.rollId==='string' && room.rollRequests.has(b.rollId)) {
         return room.rollRequests.get(b.rollId)===player.id?send(res,200,{room:publicRoom(room)}):send(res,409,{error:'This roll request has already been used.'});
@@ -75,7 +77,7 @@ function api(req,res,url) {
       if(b.action==='start') {
         if(player.id!==room.host) return send(res,403,{error:'Only the host can start the game.'});
         if(room.players.length<2) return send(res,409,{error:'Invite at least one friend to start.'});
-        if(!room.started) {room.started=true; room.message='Game started! Roll a six to bring a token out.'; for(const p of room.players) room.tokens[p.id]=[-1,-1,-1,-1];room.history=[captureGameState(room)];room.redoHistory=[];}
+        if(!room.started) {room.started=true; room.message='Game started! Roll a six to bring a token out.';room.killCounts=Object.fromEntries(room.players.map(p=>[p.id,0]));for(const p of room.players) room.tokens[p.id]=[-1,-1,-1,-1];room.history=[captureGameState(room)];room.redoHistory=[];}
       } else if(!room.started) return send(res,409,{error:'The game has not started yet.'});
       else if(b.action==='undo') {
         if(room.history.length<=1) return send(res,409,{error:'There is no game action to undo.'});
