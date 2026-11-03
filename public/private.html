@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Game Archive</title>
+  <link rel="stylesheet" href="/private.css">
+</head>
+<body>
+  <main class="private-shell">
+    <header class="private-header"><a class="brand" href="/"><span class="brand-mark">L</span><span>Ludo<span class="brand-light">Club</span></span></a><span class="private-mark">PRIVATE ACCESS</span></header>
+    <section id="login-view" class="login-wrap">
+      <form id="login-form" class="login-card" autocomplete="on">
+        <span class="eyebrow">PRIVATE ACCESS</span>
+        <h1>Sign in</h1>
+        <p>Sign in to view the game archive and captured photos.</p>
+        <label for="username">Username</label><input id="username" name="username" autocomplete="username" required maxlength="100">
+        <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+        <button id="login-button" class="primary" type="submit">Continue <span>↗</span></button>
+        <p id="login-error" class="form-error" role="alert"></p>
+      </form>
+    </section>
+    <section id="archive-view" class="archive-view hidden">
+      <div class="archive-heading"><div><span class="eyebrow">PRIVATE RECORDS</span><h1>Game archive</h1><p>Captured photos and games stored by this service.</p></div><button id="logout-button" class="secondary" type="button">Sign out</button></div>
+      <section class="archive-card"><header class="section-heading"><div><h2>Captured photos</h2><span id="avatar-total" class="count-label">0 photos</span></div></header><div id="avatar-grid" class="avatar-grid"></div><div class="pager"><button id="avatar-previous" class="pager-button" type="button">← Previous</button><span id="avatar-page"></span><button id="avatar-next" class="pager-button" type="button">Next →</button></div></section>
+      <section class="archive-card"><header class="section-heading"><div><h2>Games played</h2><span id="game-total" class="count-label">0 games</span></div></header><div class="table-scroll"><table><thead><tr><th>Room</th><th>Played</th><th>Status</th><th>Players</th><th>Winners</th><th>KOs</th></tr></thead><tbody id="game-rows"></tbody></table></div><div id="game-empty" class="empty-state hidden">No games have been recorded yet.</div><div class="pager"><button id="game-previous" class="pager-button" type="button">← Previous</button><span id="game-page"></span><button id="game-next" class="pager-button" type="button">Next →</button></div></section>
+      <p id="archive-error" class="archive-error" role="status"></p>
+    </section>
+  </main>
+  <script src="/private.js" defer></script>
+</body>
+</html>
