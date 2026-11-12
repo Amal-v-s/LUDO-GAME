@@ -31,3 +31,22 @@ The private records page is served directly at `/archive` and has no link in the
 4. Deploy. The service creates the archive tables on startup. Newly captured photos and games started after the database is configured are archived there. Rows are retained until explicitly removed from PostgreSQL.
 
 The photo and game archive endpoints require a same-origin authenticated session. The session cookie is HttpOnly, Secure on HTTPS, SameSite=Strict, signed, and expires after one hour. The sign-in page is not linked from the game.
+
+## Automated tests
+
+Install dependencies with `npm ci`, then run `npm test` for the complete local check. The command syntax-checks the server and browser scripts, runs unit and live-HTTP integration tests, and launches Chromium end-to-end tests. CI runs the same command on every push and pull request.
+
+Individual commands:
+
+```sh
+npm run test:unit         # Rules and shared board geometry
+npm run test:integration  # Isolated server processes and HTTP clients
+npm run test:e2e          # Chromium browser flows, including two clients
+npm run test:coverage     # Rule-module coverage report
+```
+
+Coverage text, HTML, and LCOV reports are written to `coverage/`. The current 90% threshold applies to the extracted core rules in `game-rules.js`; it does not imply 90% coverage of the entire browser UI or server. Playwright failure screenshots and traces are written to `test-results/`.
+
+The server is plain Node HTTP with in-memory rooms and polling; it does not use React, Socket.IO, or WebSockets. Integration tests use independent server processes and deterministic dice values. Browser tests use independent browser contexts and deterministic server rolls. For manual local debugging, run `npm start`, then visit `http://localhost:3000`.
+
+The tests record a known game-rule mismatch as an expected failure: the current rules mark a player as a winner when their first token reaches home, although Ludo normally requires all four tokens. The suite deliberately does not change that existing behavior. Rooms also reject joining after a game starts, so late-join synchronization is not an applicable supported flow. These limitations should be resolved as separate product decisions, then the corresponding tests can become required passing cases.

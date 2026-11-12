@@ -5,9 +5,20 @@
   "description": "A simple multiplayer Ludo game for up to six friends",
   "scripts": {
     "start": "node server.js",
-    "private:password": "node scripts/hash-private-password.js"
+    "private:password": "node scripts/hash-private-password.js",
+    "build": "node --check server.js && node --check game-rules.js && node --check public/board-geometry.js && node --check public/app.js && node --check public/private.js",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "test:coverage": "vitest run tests/unit --coverage",
+    "test": "npm run build && npm run test:unit && npm run test:integration && npm run test:e2e"
   },
   "dependencies": {
     "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@vitest/coverage-v8": "^5.1.0",
+    "vitest": "^5.1.0"
   }
 }

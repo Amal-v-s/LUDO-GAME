@@ -4,10 +4,10 @@ const path = require('path');
 const crypto = require('crypto');
 const {Pool} = require('pg');
 const {promisify} = require('util');
+const {current,nextTurn,validTokenMoves,moveToken,captureGameState,restoreGameState,recordGameState}=require('./game-rules');
 const PORT = process.env.PORT || 3000;
 const rooms = new Map();
 const colors = ['coral', 'green', 'yellow', 'blue', 'purple', 'orange'];
-const startOffsets = [0, 13, 26, 39, 8, 21];
 const scrypt=promisify(crypto.scrypt);
 const dbPool=process.env.DATABASE_URL?new Pool({connectionString:process.env.DATABASE_URL,max:5,idleTimeoutMillis:30000,connectionTimeoutMillis:5000}):null;
 const adminLoginAttempts=new Map();
@@ -35,9 +35,6 @@ function publicRoom(room) {
   const active=current(room);
   return { code: room.code, started: room.started, players: room.players.map(({id, name, color, avatar}) => ({id, name, color, avatar:avatar||''})), turn: room.turn, die: room.die, lastRoll:room.lastRoll||null, killCounts:room.killCounts||{}, canUndo:Boolean(room.started&&room.history?.length>1), canRedo:Boolean(room.started&&room.redoHistory?.length), historyEpoch:room.historyEpoch||0, validMoves:active?validTokenMoves(room,active.id):[], message: room.message, tokens: room.tokens, winners: room.winners };
 }
-function captureGameState(room) { return {turn:room.turn,die:room.die,lastRoll:room.lastRoll?{...room.lastRoll}:null,message:room.message,tokens:Object.fromEntries(Object.entries(room.tokens).map(([id,positions])=>[id,[...positions]])),winners:[...room.winners],killCounts:{...room.killCounts}}; }
-function restoreGameState(room,state) { room.turn=state.turn;room.die=state.die;room.lastRoll=state.lastRoll?{...state.lastRoll}:null;room.message=state.message;room.tokens=Object.fromEntries(Object.entries(state.tokens).map(([id,positions])=>[id,[...positions]]));room.winners=[...state.winners];room.killCounts={...(state.killCounts||{})}; }
-function recordGameState(room) { room.history.push(captureGameState(room));if(room.history.length>101)room.history.shift();room.redoHistory=[]; }
 function send(res, status, data) { res.writeHead(status, {'content-type':'application/json','access-control-allow-origin':'*','cache-control':'no-store'}); res.end(JSON.stringify(data)); }
 function sendPrivate(res,status,data,headers={}){res.writeHead(status,{'content-type':'application/json; charset=utf-8','cache-control':'private, no-store','pragma':'no-cache','x-content-type-options':'nosniff',...headers});res.end(JSON.stringify(data));}
 function body(req,maxBytes=250000) { return new Promise((resolve,reject)=>{let s='',size=0,settled=false;req.on('data',chunk=>{size+=chunk.length;if(size>maxBytes){settled=true;reject(Object.assign(new Error('Request too large'),{statusCode:413}));req.resume();return}if(!settled)s+=chunk});req.on('end',()=>{if(settled)return;try{resolve(JSON.parse(s||'{}'))}catch(e){reject(e)}});req.on('error',reject);}); }
@@ -58,30 +55,6 @@ async function privateApi(req,res,url){if(!privateAccessConfigured())return send
  if(req.method==='GET'&&url.pathname==='/api/private/data'){if(!dbPool)return sendPrivate(res,503,{error:'Archive storage is unavailable.'});const limit=24,avatarOffset=Math.max(0,Math.min(100000,Number.parseInt(url.searchParams.get('avatarOffset')||'0',10)||0)),gameOffset=Math.max(0,Math.min(100000,Number.parseInt(url.searchParams.get('gameOffset')||'0',10)||0));try{const [avatars,games,avatarCount,gameCount]=await Promise.all([dbPool.query('SELECT player_id,player_name,player_color,captured_at FROM ludo_captured_avatars ORDER BY captured_at DESC LIMIT $1 OFFSET $2',[limit,avatarOffset]),dbPool.query('SELECT game_id,room_code,status,started_at,finished_at,players,winners,kill_counts FROM ludo_game_archive ORDER BY started_at DESC LIMIT $1 OFFSET $2',[limit,gameOffset]),dbPool.query('SELECT COUNT(*)::int AS total FROM ludo_captured_avatars'),dbPool.query('SELECT COUNT(*)::int AS total FROM ludo_game_archive')]);return sendPrivate(res,200,{avatars:avatars.rows,avatarTotal:avatarCount.rows[0].total,avatarOffset,avatarLimit:limit,games:games.rows,gameTotal:gameCount.rows[0].total,gameOffset,gameLimit:limit})}catch(error){console.error('Private archive query failed:',error.message);return sendPrivate(res,503,{error:'Archive storage is temporarily unavailable.'})}}
  const avatarMatch=url.pathname.match(/^\/api\/private\/avatar\/([0-9a-f-]{36})$/i);if(req.method==='GET'&&avatarMatch){try{const result=await dbPool.query('SELECT image_data FROM ludo_captured_avatars WHERE player_id=$1',[avatarMatch[1]]);if(!result.rowCount)return sendPrivate(res,404,{error:'Photo not found.'});const match=result.rows[0].image_data.match(/^data:image\/(webp|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/);if(!match)return sendPrivate(res,404,{error:'Photo not found.'});const bytes=Buffer.from(match[2],'base64');res.writeHead(200,{'content-type':`image/${match[1]}`,'content-length':bytes.length,'cache-control':'private, no-store','x-content-type-options':'nosniff','content-security-policy':"default-src 'none'; sandbox"});return res.end(bytes)}catch(error){console.error('Private photo query failed:',error.message);return sendPrivate(res,503,{error:'Photo storage is temporarily unavailable.'})}}
  return sendPrivate(res,404,{error:'Not found.'})}
-function current(room) { return room.players[room.turn]; }
-function nextTurn(room) { let n=room.players.length; do { room.turn=(room.turn+1)%n; } while(room.winners.includes(room.players[room.turn].id) && room.winners.length<n); }
-function validTokenMoves(room, playerId) {
-  if(room.die===null) return [];
-  return (room.tokens[playerId]||[]).flatMap((position,index)=>position<0?room.die===6?[index]:[]:position+room.die<=57?[index]:[]);
-}
-function moveToken(room, player, idx) {
-  const ts=room.tokens[player.id], old=ts[idx];
-  if(old<0 && room.die!==6 || old>=0 && old+room.die>57) return {error:'That token cannot move.'};
-  let captures=0; ts[idx]=old<0?0:old+room.die;
-  const playerIndex=room.players.findIndex(p=>p.id===player.id), start=startOffsets[playerIndex];
-  if(ts[idx]<52) {
-    const pos=(start+ts[idx])%52;
-    if(![0,8,13,21,26,34,39,47].includes(pos)) for(const op of room.players) if(op.id!==player.id) {const opIndex=room.players.findIndex(p=>p.id===op.id);room.tokens[op.id].forEach((t,i)=>{if(t>=0&&t<52&&(startOffsets[opIndex]+t)%52===pos){room.tokens[op.id][i]=-1;captures++;}});}
-  }
-  if(captures) room.killCounts[player.id]=(room.killCounts[player.id]||0)+captures;
-  const finished=ts[idx]===57; if(finished&&!room.winners.includes(player.id)) room.winners.push(player.id);
-  const captured=captures>0,bonus=room.die===6||captured||finished;
-  const description=finished?`${player.name} brought a token home!`:captured?`${player.name} captured ${captures} token${captures===1?'':'s'}!`:`${player.name} moved a token.`;
-  room.die=null;
-  if(room.winners.length===room.players.length-1) {room.winners.push(...room.players.filter(p=>!room.winners.includes(p.id)).map(p=>p.id));room.message='Game over!';}
-  else if(!bonus) nextTurn(room);
-  return {captured,captures,finished,bonus,description};
-}
 function api(req,res,url) {
   if(url.pathname==='/archive'||url.pathname==='/archive/')return servePrivatePage(res);
   if(url.pathname.startsWith('/api/private/'))return privateApi(req,res,url);
